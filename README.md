@@ -1,10 +1,14 @@
 # Kafka Atlas
 
+[![atlas](https://img.shields.io/badge/atlas-aboualyxcode.github.io%2Fkafka--atlas-2b59c3)](https://aboualyxcode.github.io/kafka-atlas/) [![CI](https://github.com/aboualyXcode/kafka-atlas/actions/workflows/ci.yml/badge.svg)](https://github.com/aboualyXcode/kafka-atlas/actions/workflows/ci.yml) [![failures](https://img.shields.io/badge/failures-24-d7263d)](https://aboualyxcode.github.io/kafka-atlas/#/failures) [![incidents](https://img.shields.io/badge/incidents-replayed-cf7c00)](https://aboualyxcode.github.io/kafka-atlas/#/incidents) [![no build step](https://img.shields.io/badge/build-none%2C%20open%20index.html-0c7c70)](https://aboualyxcode.github.io/kafka-atlas/)
+
 **Apache Kafka and Amazon MSK, drawn as a map you can click.** See what every part of a cluster does and how records travel through it, play animated flows, and watch each of 24 production failures travel from where it starts to where you notice it.
 
-![The cluster map playing "A record, from send() to acknowledged", step 7: the leader appends the batch](docs/images/flow.png)
+**[▶ Open the atlas](https://aboualyxcode.github.io/kafka-atlas/)**
 
-Open `index.html` in a browser. There is no build step, no server and no dependency, and nothing you paste leaves your machine.
+[![The cluster map playing "A record, from send() to acknowledged", step 7: the leader appends the batch](docs/images/flow.png)](https://aboualyxcode.github.io/kafka-atlas/)
+
+Use the [published atlas](https://aboualyxcode.github.io/kafka-atlas/), or open `index.html` in a browser. There is no build step, no server and no dependency, and nothing you paste leaves your machine.
 
 ## What's inside
 
