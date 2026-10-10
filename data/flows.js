@@ -1,0 +1,101 @@
+// Flows play step by step on a map: a token travels from `from` to `to`, the caption explains the
+// step, and `breaks` lists the failures that stop the flow at that step. A step whose `from` and
+// `to` are the same station happens inside that component.
+KA.define("flows", [
+  {
+    id: "produce-path", map: "cluster",
+    title: "A record, from send() to acknowledged",
+    summary: "The path every write takes with acks=all. Learn it once and every producer error becomes a question of which step stopped.",
+    steps: [
+      { from: "producer", to: "dns", title: "Find the cluster", note: "The client resolves the bootstrap address and connects to any broker.", breaks: ["advertised-listeners"] },
+      { from: "producer", to: "listener", title: "Fetch metadata", note: "The broker returns each partition's leader and every broker's advertised address; from now on the producer talks to leaders directly.", breaks: ["advertised-listeners", "tls-handshake-failed", "authentication-failed"] },
+      { from: "producer", to: "schema-registry", title: "Serialize with a schema", note: "The serializer looks up or registers the schema and writes its ID in front of the payload.", breaks: ["schema-incompatible"] },
+      { from: "producer", to: "producer", title: "Batch per partition", note: "The key picks the partition. Records wait up to `linger.ms` to fill a batch, which is then compressed.", breaks: ["record-too-large"] },
+      { from: "producer", to: "listener", title: "Send to the leader", note: "One produce request per broker carries the batches for the partitions it leads.", breaks: ["producer-timeout", "authorization-failed", "quota-throttling"] },
+      { from: "listener", to: "request-handler", title: "Queue the request", note: "A network thread reads it; an I/O thread picks it up.", breaks: ["request-handler-saturation"] },
+      { from: "request-handler", to: "leader", title: "Append to the log", note: "The leader checks the batch, assigns offsets and appends it.", breaks: ["not-enough-replicas", "record-too-large"] },
+      { from: "leader", to: "log", title: "Write to the page cache", note: "The append lands in memory; the operating system flushes it to disk later.", breaks: ["disk-full"] },
+      { from: "replica-fetcher", to: "leader", title: "Followers fetch", note: "Followers on the other brokers fetch the new records and report how far they have got.", breaks: ["under-replicated-partitions"] },
+      { from: "leader", to: "request-handler", title: "The high watermark advances", note: "Once every in-sync replica has the records, the high watermark moves and the waiting request completes.", breaks: ["not-enough-replicas"] },
+      { from: "request-handler", to: "producer", title: "Acknowledged", note: "With `acks=all` the record now survives the loss of any in-sync replica but the last.", breaks: ["producer-timeout"] },
+    ],
+  },
+  {
+    id: "consume-path", map: "cluster",
+    title: "A consumer group reads and commits",
+    summary: "How a group shares partitions, reads them and remembers where it got to.",
+    steps: [
+      { from: "consumer", to: "listener", title: "Find the coordinator", note: "The group's coordinator is the broker leading one `__consumer_offsets` partition, chosen by hashing the group ID.", breaks: ["coordinator-not-available"] },
+      { from: "consumer", to: "group-coordinator", title: "Join the group", note: "Members join and partitions are assigned so that each one has exactly one reader.", breaks: ["rebalance-storm", "authorization-failed"] },
+      { from: "consumer", to: "leader", title: "Fetch", note: "Each member fetches from its partitions' leaders, or from a follower in its own rack, starting at the committed offset.", breaks: ["offset-out-of-range"] },
+      { from: "consumer", to: "schema-registry", title: "Deserialize", note: "The deserializer fetches the writer's schema by its ID.", breaks: ["deserialization-error"] },
+      { from: "consumer", to: "consumer", title: "Process within the poll interval", note: "The next `poll()` must come within `max.poll.interval.ms`, or the member is removed.", breaks: ["rebalance-storm", "consumer-lag"] },
+      { from: "consumer", to: "group-coordinator", title: "Commit offsets", note: "Commits go to `__consumer_offsets`; after a restart the group resumes from there.", breaks: ["rebalance-storm"] },
+      { from: "group-coordinator", to: "log", title: "Stored durably", note: "Offset commits are replicated like any other record.", breaks: ["under-replicated-partitions"] },
+    ],
+  },
+  {
+    id: "broker-dies", map: "cluster",
+    title: "A broker dies",
+    summary: "What the controller, the followers and the clients do, and when, after broker 1 disappears without warning.",
+    steps: [
+      { from: "leader", to: "leader", title: "t0: broker 1 stops", note: "A crash, a host failure or a full disk. Its heartbeats to the controller stop.", breaks: ["disk-full"] },
+      { from: "controller", to: "controller", title: "t0 + 9 s: fenced", note: "After `broker.session.timeout.ms` the active controller fences the broker.", breaks: ["controller-quorum-unavailable"] },
+      { from: "controller", to: "followers", title: "New leaders are elected", note: "For each partition broker 1 led, an in-sync follower becomes leader. Where no replica is in sync, the partition goes offline.", breaks: ["offline-partitions"] },
+      { from: "controller", to: "listener", title: "Metadata spreads", note: "Every broker applies the change from the metadata log." },
+      { from: "producer", to: "followers", title: "Clients find the new leaders", note: "Requests to the old leader fail with NOT_LEADER_OR_FOLLOWER; clients refresh metadata and retry.", breaks: ["producer-timeout"] },
+      { from: "replica-fetcher", to: "followers", title: "One copy short", note: "Partitions run with one replica fewer. With replication factor 3 and min.insync.replicas=2, writes continue.", breaks: ["under-replicated-partitions", "not-enough-replicas"] },
+      { from: "leader", to: "followers", title: "Broker 1 returns and catches up", note: "It fetches what it missed, rejoins the ISR, and preferred leader election hands leadership back.", breaks: ["under-replicated-partitions"] },
+    ],
+  },
+  {
+    id: "rebalance", map: "cluster",
+    title: "A consumer group rebalances",
+    summary: "What happens when a member joins, leaves or is thrown out, and how cooperative assignment keeps the pause short.",
+    steps: [
+      { from: "consumer", to: "group-coordinator", title: "A member joins or leaves", note: "A deploy, autoscaling, a crash, or a poll loop that took too long.", breaks: ["rebalance-storm"] },
+      { from: "group-coordinator", to: "consumer", title: "The rebalance starts", note: "Members are asked to rejoin. With cooperative assignment, only partitions that move are revoked." },
+      { from: "consumer", to: "consumer", title: "Commit before giving up partitions", note: "Members commit offsets for partitions they are about to lose; otherwise the next owner reprocesses them.", breaks: ["rebalance-storm"] },
+      { from: "group-coordinator", to: "consumer", title: "New assignment", note: "Each member receives its partitions and resumes from the committed offsets.", breaks: ["coordinator-not-available"] },
+      { from: "consumer", to: "leader", title: "Fetching resumes", note: "The lag that built up during the pause is consumed.", breaks: ["consumer-lag"] },
+    ],
+  },
+  {
+    id: "exactly-once", map: "cluster",
+    title: "Read, process and write exactly once",
+    summary: "How a transactional producer makes its outputs and its consumed offsets visible together, or not at all.",
+    steps: [
+      { from: "producer", to: "txn-coordinator", title: "Register the transactional ID", note: "`initTransactions()` gets a producer ID and epoch; an older instance with the same ID is fenced.", breaks: ["authorization-failed"] },
+      { from: "producer", to: "leader", title: "Write inside the transaction", note: "Output records are written but stay invisible to read_committed consumers." },
+      { from: "producer", to: "group-coordinator", title: "Add the consumed offsets", note: "`sendOffsetsToTransaction` makes the input offsets part of the same transaction." },
+      { from: "txn-coordinator", to: "leader", title: "Commit markers", note: "On commit, the coordinator writes a marker into every partition involved; everything becomes visible at once." },
+      { from: "consumer", to: "leader", title: "read_committed consumers see it", note: "They read up to the last stable offset; an open transaction holds them back.", breaks: ["consumer-lag"] },
+    ],
+  },
+  {
+    id: "aws-iam-connect", map: "aws",
+    title: "A client connects to MSK with IAM",
+    summary: "From a bootstrap string to an authorized request: the network path, TLS, authentication and per-request authorization.",
+    steps: [
+      { from: "producer", to: "dns", title: "Resolve the bootstrap brokers", note: "`get-bootstrap-brokers` lists names per authentication method; IAM uses port 9098.", breaks: ["broker-unreachable"] },
+      { from: "producer", to: "security-groups", title: "Pass the security group", note: "The brokers' security group must allow the client's group on 9098.", breaks: ["broker-unreachable"] },
+      { from: "producer", to: "broker", title: "TLS, then SASL", note: "The client opens TLS and signs a SASL request with its AWS credentials (aws-msk-iam-auth).", breaks: ["tls-handshake-failed", "authentication-failed"] },
+      { from: "broker", to: "iam", title: "Authenticate", note: "MSK verifies the signature and the `kafka-cluster:Connect` permission.", breaks: ["authentication-failed"] },
+      { from: "broker", to: "iam", title: "Authorize every request", note: "Each produce, fetch and admin call is checked against the `kafka-cluster` action for its topic or group.", breaks: ["authorization-failed"] },
+      { from: "broker", to: "producer", title: "Metadata with every broker", note: "The client then connects to each leader directly, through the same checks.", breaks: ["broker-unreachable"] },
+    ],
+  },
+  {
+    id: "aws-storage", map: "aws",
+    title: "Data on disk, then in tiered storage",
+    summary: "Where a record lives over its lifetime on MSK, and which limit each read and write meets.",
+    steps: [
+      { from: "producer", to: "broker", title: "Writes arrive", note: "Each broker writes its partitions' segments, its own and those it follows.", breaks: ["broker-throughput-cap"] },
+      { from: "broker", to: "ebs", title: "The local log", note: "Segments stay on the broker's volume for `local.retention.ms`.", breaks: ["disk-full", "broker-throughput-cap"] },
+      { from: "ebs", to: "tiered-storage", title: "Older segments move", note: "Closed segments are copied to the remote tier, then deleted locally." },
+      { from: "consumer", to: "broker", title: "Recent reads come from memory", note: "Consumers that keep up read from the page cache.", breaks: ["consumer-lag"] },
+      { from: "broker", to: "tiered-storage", title: "Old reads come from the remote tier", note: "A consumer replaying history fetches from S3 through the broker, using its network.", breaks: ["broker-throughput-cap", "offset-out-of-range"] },
+      { from: "broker", to: "cloudwatch", title: "Watch the limits", note: "Disk use, volume throughput and network allowance metrics show how close each broker is." },
+    ],
+  },
+]);
