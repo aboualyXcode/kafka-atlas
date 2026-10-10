@@ -1,0 +1,69 @@
+# Kafka on EKS with the Strimzi operator: three dedicated controllers, three brokers, one topic.
+# An example shape; check field names against the Strimzi version you run.
+apiVersion: kafka.strimzi.io/v1beta2
+kind: KafkaNodePool
+metadata:
+  name: controllers
+  namespace: kafka
+  labels: { strimzi.io/cluster: larder }
+spec:
+  replicas: 3
+  roles: [controller]
+  storage:
+    type: jbod
+    volumes:
+      - { id: 0, type: persistent-claim, size: 20Gi, kraftMetadata: shared, deleteClaim: false }
+---
+apiVersion: kafka.strimzi.io/v1beta2
+kind: KafkaNodePool
+metadata:
+  name: brokers
+  namespace: kafka
+  labels: { strimzi.io/cluster: larder }
+spec:
+  replicas: 3
+  roles: [broker]
+  storage:
+    type: jbod
+    volumes:
+      - { id: 0, type: persistent-claim, size: 1000Gi, deleteClaim: false }
+---
+apiVersion: kafka.strimzi.io/v1beta2
+kind: Kafka
+metadata:
+  name: larder
+  namespace: kafka
+  annotations:
+    strimzi.io/node-pools: enabled
+    strimzi.io/kraft: enabled
+spec:
+  kafka:
+    version: 4.0.0
+    listeners:
+      - { name: tls, port: 9093, type: internal, tls: true, authentication: { type: tls } }
+    authorization: { type: simple }
+    rack: { topologyKey: topology.kubernetes.io/zone }
+    config:
+      default.replication.factor: 3
+      min.insync.replicas: 2
+      offsets.topic.replication.factor: 3
+      transaction.state.log.replication.factor: 3
+      transaction.state.log.min.isr: 2
+      auto.create.topics.enable: false
+      unclean.leader.election.enable: false
+  entityOperator:
+    topicOperator: {}
+    userOperator: {}
+---
+apiVersion: kafka.strimzi.io/v1beta2
+kind: KafkaTopic
+metadata:
+  name: orders
+  namespace: kafka
+  labels: { strimzi.io/cluster: larder }
+spec:
+  partitions: 12
+  replicas: 3
+  config:
+    min.insync.replicas: 2
+    retention.ms: 604800000

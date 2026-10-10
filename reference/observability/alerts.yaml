@@ -1,0 +1,106 @@
+# Prometheus alerting rules for Kafka. Every rule links to the page that explains it.
+# Metric names assume the Prometheus JMX exporter with common Kafka rules, node_exporter, and
+# kafka-lag-exporter for consumer time lag; adjust them to your exporters. npm test checks the links.
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: kafka
+  namespace: monitoring
+spec:
+  groups:
+  - name: replication
+    rules:
+    - alert: KafkaOfflinePartitions
+      expr: sum(kafka_controller_kafkacontroller_offlinepartitionscount) > 0
+      for: 1m
+      labels:
+        severity: page
+      annotations:
+        summary: '{{ $value }} partitions have no leader'
+        runbook_url: https://github.com/your-org/kafka-atlas/blob/main/docs/runbooks/offline-partitions.md
+    - alert: KafkaUnderMinIsrPartitions
+      expr: sum by (instance) (kafka_server_replicamanager_underminisrpartitioncount) > 0
+      for: 2m
+      labels:
+        severity: page
+      annotations:
+        summary: 'Partitions led by {{ $labels.instance }} reject acks=all writes'
+        runbook_url: https://github.com/your-org/kafka-atlas/blob/main/docs/failures/not-enough-replicas.md
+    - alert: KafkaUnderReplicatedPartitions
+      expr: sum by (instance) (kafka_server_replicamanager_underreplicatedpartitions) > 0
+      for: 5m
+      labels:
+        severity: ticket
+      annotations:
+        summary: '{{ $labels.instance }} leads under-replicated partitions'
+        runbook_url: https://github.com/your-org/kafka-atlas/blob/main/docs/runbooks/under-replicated.md
+  - name: controller
+    rules:
+    - alert: KafkaNoActiveController
+      expr: sum(kafka_controller_kafkacontroller_activecontrollercount) != 1
+      for: 2m
+      labels:
+        severity: page
+      annotations:
+        summary: 'The cluster reports {{ $value }} active controllers'
+        runbook_url: https://github.com/your-org/kafka-atlas/blob/main/docs/failures/controller-quorum-unavailable.md
+  - name: brokers
+    rules:
+    - alert: KafkaBrokerDiskUsageHigh
+      expr: (1 - node_filesystem_avail_bytes{mountpoint="/var/lib/kafka/data"} / node_filesystem_size_bytes{mountpoint="/var/lib/kafka/data"}) > 0.85
+      for: 10m
+      labels:
+        severity: page
+      annotations:
+        summary: 'Kafka data disk on {{ $labels.instance }} is above 85%'
+        runbook_url: https://github.com/your-org/kafka-atlas/blob/main/docs/runbooks/disk-usage.md
+    - alert: KafkaRequestHandlersBusy
+      expr: kafka_server_kafkarequesthandlerpool_requesthandleravgidlepercent < 0.3
+      for: 15m
+      labels:
+        severity: ticket
+      annotations:
+        summary: 'Request handlers on {{ $labels.instance }} are more than 70% busy'
+        runbook_url: https://github.com/your-org/kafka-atlas/blob/main/docs/failures/request-handler-saturation.md
+    - alert: KafkaLogCleanerDead
+      expr: kafka_log_logcleaner_deadthreadcount > 0
+      for: 5m
+      labels:
+        severity: ticket
+      annotations:
+        summary: 'A log cleaner thread died on {{ $labels.instance }}'
+        runbook_url: https://github.com/your-org/kafka-atlas/blob/main/docs/failures/log-compaction-stuck.md
+    - alert: KafkaOpenFileDescriptorsHigh
+      expr: process_open_fds{job="kafka"} / process_max_fds{job="kafka"} > 0.7
+      for: 15m
+      labels:
+        severity: ticket
+      annotations:
+        summary: '{{ $labels.instance }} uses more than 70% of its file descriptors'
+        runbook_url: https://github.com/your-org/kafka-atlas/blob/main/docs/failures/file-descriptor-exhaustion.md
+  - name: clients
+    rules:
+    - alert: KafkaConsumerGroupLagHigh
+      expr: max by (group) (kafka_consumergroup_group_max_lag_seconds) > 900
+      for: 10m
+      labels:
+        severity: ticket
+      annotations:
+        summary: 'Consumer group {{ $labels.group }} is more than 15 minutes behind'
+        runbook_url: https://github.com/your-org/kafka-atlas/blob/main/docs/runbooks/consumer-lag.md
+    - alert: KafkaAuthenticationFailures
+      expr: sum by (instance) (rate(kafka_server_socket_server_metrics_failed_authentication_total[5m])) > 1
+      for: 10m
+      labels:
+        severity: ticket
+      annotations:
+        summary: 'Clients keep failing to authenticate on {{ $labels.instance }}'
+        runbook_url: https://github.com/your-org/kafka-atlas/blob/main/docs/runbooks/client-connectivity.md
+    - alert: KafkaConnectTaskFailed
+      expr: sum by (connector) (kafka_connect_connect_worker_metrics_connector_failed_task_count) > 0
+      for: 5m
+      labels:
+        severity: ticket
+      annotations:
+        summary: 'Connector {{ $labels.connector }} has failed tasks'
+        runbook_url: https://github.com/your-org/kafka-atlas/blob/main/docs/failures/connect-task-failed.md

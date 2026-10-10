@@ -1,0 +1,23 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "ConnectAndProduceIdempotently",
+      "Effect": "Allow",
+      "Action": ["kafka-cluster:Connect", "kafka-cluster:DescribeCluster", "kafka-cluster:WriteDataIdempotently"],
+      "Resource": "arn:aws:kafka:eu-west-1:123456789012:cluster/larder-prod/*"
+    },
+    {
+      "Sid": "ProduceAndConsumeOrders",
+      "Effect": "Allow",
+      "Action": ["kafka-cluster:DescribeTopic", "kafka-cluster:WriteData", "kafka-cluster:ReadData"],
+      "Resource": "arn:aws:kafka:eu-west-1:123456789012:topic/larder-prod/*/orders"
+    },
+    {
+      "Sid": "BillingGroup",
+      "Effect": "Allow",
+      "Action": ["kafka-cluster:AlterGroup", "kafka-cluster:DescribeGroup"],
+      "Resource": "arn:aws:kafka:eu-west-1:123456789012:group/larder-prod/*/billing"
+    }
+  ]
+}
